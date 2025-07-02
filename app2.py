@@ -7,7 +7,7 @@ import altair as alt
 ssl._create_default_https_context = ssl._create_unverified_context
 
 # 📝 Заголовок
-st.title("Простой дашборд Google Sheets")
+st.title("Исследование конкурентов")
 
 # 🔗 CSV-ссылка
 url = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSigXcrNvRJII0f0bRwOhUGr4r5chw6NqxGjuiw2H18PlcdoAuewonaMGgE_oy4a5MHbzVifX67wulr/pub?output=csv'
@@ -35,13 +35,13 @@ if 'selected_companies' not in st.session_state:
 # 🔘 Кнопки управления выбором компаний
 col1, col2, col3 = st.columns(3)
 with col1:
-    if st.button("Выбрать все компании"):
+    if st.button("Выбрать все"):
         st.session_state.selected_companies = company_list_sorted
 with col2:
-    if st.button("Сбросить все компании"):
+    if st.button("Сбросить"):
         st.session_state.selected_companies = []
 with col3:
-    if st.button("Выбрать ТОП-5"):
+    if st.button("ТОП-5"):
         top5 = ['Авито', 'Альфа-Банк', 'Т-банк', 'Яндекс', 'Ozon']
         st.session_state.selected_companies = [c for c in top5 if c in df['Компания'].unique()]
 
@@ -67,7 +67,7 @@ if 'selected_platforms' not in st.session_state:
     st.session_state.selected_platforms = platform_order
 
 selected_platforms = st.multiselect(
-    "Выбери площадки для отображения",
+    "Карьерные площадки",
     options=platform_order,
     default=st.session_state.selected_platforms,
     key="selected_platforms"
@@ -85,7 +85,7 @@ def render_platform_legend():
     st.markdown(legend_html, unsafe_allow_html=True)
 
 # 📈 **Bar chart**
-st.subheader("Bar chart: количество вакансий по площадкам (выбранные компании)")
+st.subheader("Количество вакансий на площадках всего")
 render_platform_legend()
 
 if not filtered_df.empty:
@@ -107,7 +107,7 @@ else:
     st.write("Нет данных для отображения. Выберите хотя бы одну компанию.")
 
 # 📈 **Line chart**
-st.subheader("Line chart: вакансии по площадкам для каждой компании")
+st.subheader("Количество вакансий на каждой из площадок")
 render_platform_legend()
 
 if not filtered_df.empty:
