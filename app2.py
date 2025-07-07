@@ -1,220 +1,285 @@
 import streamlit as st
 import pandas as pd
-import ssl
-import altair as alt
-import numpy as np
+import re
+import plotly.express as px
+import textwrap
 
-# 🔧 Обход SSL
-ssl._create_default_https_context = ssl._create_unverified_context
+st.set_page_config(layout="wide")
+st.title("Аналитика по TG-каналам с продуктовой тематикой")
 
-# 📝 Заголовок
-st.title("Исследование конкурентов")
+# ======================
+# Загрузка данных
+# ======================
+url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTfWtx-JbH9jxS-P6v_TZoAcxsmvccteo_BxtASUpoLxAL7AmFnXoZim5_3umjBh2or6-X20m39Zn9h/pub?output=tsv"
+df = pd.read_csv(url, sep="\t")
+df.columns = df.columns.str.strip()
 
-# 🔗 CSV-ссылка вакансий
-url = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSigXcrNvRJII0f0bRwOhUGr4r5chw6NqxGjuiw2H18PlcdoAuewonaMGgE_oy4a5MHbzVifX67wulr/pub?output=csv'
-df = pd.read_csv(url)
+# ======================
+# Функции
+# ======================
+def get_companies(df):
+    companies_set = set()
+    for authors in df['Автор'].dropna():
+        parts = [p.strip() for p in authors.split(',')]
+        for p in parts:
+            if not re.match(r'^[A-ZА-ЯЁ][a-zа-яё]+\s[A-ZА-ЯЁ][a-zа-яё]+$', p):
+                if p != "Нет информации":
+                    companies_set.add(p)
+    return sorted(list(companies_set))
 
-# ✅ Переименование первой колонки
-if 'Unnamed: 0' in df.columns:
-    df.rename(columns={'Unnamed: 0': 'Компания'}, inplace=True)
+def filter_multi_category(df, column, selected_options):
+    if not selected_options:
+        return df
+    mask = df[column].apply(lambda x: any(option in str(x) for option in selected_options))
+    return df[mask]
 
-# 🔄 Замена названий компаний
-df['Компания'] = df['Компания'].replace({
-    'Альфа': 'Альфа-Банк',
-    'Озон': 'Ozon'
+# ======================
+# Блок поиска
+# ======================
+st.header("Поиск")
+
+search_options = pd.concat([df['Название канала'], df['Username'], df['Автор']]).dropna().unique()
+search_selection = st.multiselect("Начните вводить название канала, его username или автора:", options=search_options)
+
+if search_selection:
+    df = df[
+        df['Название канала'].isin(search_selection) |
+        df['Username'].isin(search_selection) |
+        df['Автор'].isin(search_selection)
+    ]
+
+# ======================
+# Фильтр по компаниям
+# ======================
+st.header("Фильтр")
+
+companies = get_companies(df)
+col_comp1, col_comp2 = st.columns([4,1])
+with col_comp1:
+    selected_companies = st.multiselect("По компаниям: (в том числе личные блоги сотрудников компаний)", options=companies, default=[])
+with col_comp2:
+    all_companies_selected = set(selected_companies) == set(companies)
+    select_all_companies = st.checkbox("выбрать все варианты", value=all_companies_selected, key='companies')
+
+if select_all_companies and not all_companies_selected:
+    selected_companies = companies
+elif not select_all_companies and all_companies_selected and len(selected_companies) < len(companies):
+    select_all_companies = False
+
+if selected_companies:
+    def company_filter(authors):
+        parts = [p.strip() for p in str(authors).split(',')]
+        return any(company in parts for company in selected_companies)
+    df = df[df['Автор'].apply(company_filter)]
+
+# ======================
+# Фильтры по Типу, Тематике, Про что
+# ======================
+
+# Тип
+types = df['Тип'].dropna().unique()
+col_type1, col_type2 = st.columns([4,1])
+with col_type1:
+    selected_types = st.multiselect("По типу: (канал компании / личный блог / агрегатор данных)", options=types, default=[])
+with col_type2:
+    all_types_selected = set(selected_types) == set(types)
+    select_all_types = st.checkbox("выбрать все варианты", value=all_types_selected, key='types')
+
+if select_all_types and not all_types_selected:
+    selected_types = types
+elif not select_all_types and all_types_selected and len(selected_types) < len(types):
+    select_all_types = False
+
+# Тематика
+allowed_themes = ["Вакансии","Дизайн","Карьера","Общее IT","Продакт-менеджмент","Разработка","Стартапы","AI","Софт-скиллы","Бизнес","Data Science","CX / Клиентский опыт","Обучение"]
+col_theme1, col_theme2 = st.columns([4,1])
+with col_theme1:
+    selected_themes = st.multiselect("По тематике:", options=allowed_themes, default=allowed_themes)
+with col_theme2:
+    all_themes_selected = set(selected_themes) == set(allowed_themes)
+    select_all_themes = st.checkbox("выбрать все варианты", value=all_themes_selected, key='themes')
+
+if select_all_themes and not all_themes_selected:
+    selected_themes = allowed_themes
+elif not select_all_themes and all_themes_selected and len(selected_themes) < len(allowed_themes):
+    select_all_themes = False
+
+df = filter_multi_category(df, 'Тематика', selected_themes)
+
+# Про что
+allowed_about = ["Вакансии","Дизайн","Исследования","Менеджмент","Продукт","Разработка","Обучение"]
+col_about1, col_about2 = st.columns([4,1])
+with col_about1:
+    selected_about = st.multiselect("По направлению:", options=allowed_about, default=allowed_about)
+with col_about2:
+    all_about_selected = set(selected_about) == set(allowed_about)
+    select_all_about = st.checkbox("выбрать все варианты", value=all_about_selected, key='about')
+
+if select_all_about and not all_about_selected:
+    selected_about = allowed_about
+elif not select_all_about and all_about_selected and len(selected_about) < len(allowed_about):
+    select_all_about = False
+
+df = filter_multi_category(df, 'Про что', selected_about)
+
+# Фильтрация по типам
+if selected_types:
+    df = df[df['Тип'].isin(selected_types)]
+
+# ======================
+# Таблица с данными по выбранным фильтрам / поиску
+# ======================
+total_channels = len(df)
+companies_count = len(df[df['Тип'] == 'Компания'])
+personal_count = len(df[df['Тип'] == 'Персональный'])
+aggregators_count = len(df[df['Тип'] == 'Агрегатор'])
+
+summary_df = pd.DataFrame({
+    "Категория": ["Всего каналов", "Количество компаний", "Количество персональных", "Количество агрегаторов"],
+    "Количество каналов": [total_channels, companies_count, personal_count, aggregators_count]
 })
 
-# 🔠 Сортировка компаний по алфавиту
-company_list_sorted = sorted(df['Компания'].unique())
+# Отображаем таблицу с кастомной шириной, по центру и с выравниванием
+styled_table = f"""
+<style>
+.table-container {{
+    display: flex;
+    justify-content: center;
+}}
+table {{
+    width: 500px !important;
+    border-collapse: collapse;
+}}
+th {{
+    text-align: left !important;
+    padding: 4px 8px;
+}}
+td {{
+    text-align: left !important;
+    padding: 4px 8px;
+}}
+</style>
 
-# ⚙️ Session state
-if 'selected_companies' not in st.session_state:
-    st.session_state.selected_companies = company_list_sorted
+<div class="table-container">
+{summary_df.to_html(index=False)}
+</div>
+"""
 
-# 🔘 Кнопки управления выбором компаний
-col1, col2, col3 = st.columns(3)
-with col1:
-    if st.button("Выбрать все"):
-        st.session_state.selected_companies = company_list_sorted
-with col2:
-    if st.button("Сбросить"):
-        st.session_state.selected_companies = []
-with col3:
-    if st.button("ТОП-5"):
-        top5 = ['Авито', 'Альфа-Банк', 'Т-банк', 'Яндекс', 'Ozon']
-        st.session_state.selected_companies = [c for c in top5 if c in df['Компания'].unique()]
+st.markdown(styled_table, unsafe_allow_html=True)
 
-# 🔍 Мультиселект компаний
-companies = st.multiselect(
-    "Выбери компании для отображения",
-    options=company_list_sorted,
-    default=st.session_state.selected_companies,
-    key="selected_companies"
-)
+# ======================
+# Визуализации
+# ======================
+def plot_bar(df_filtered, title, value_col, y_col='Название канала', max_rows=25, key=None, show_checkbox=True):
+    if value_col not in df_filtered.columns:
+        st.warning(f"Колонка '{value_col}' отсутствует в данных.")
+        return
+    
+    df_sorted = df_filtered.sort_values(by=value_col, ascending=True)
+    total_rows = len(df_sorted)
+    
+    if not key:
+        key = title
 
-# ✅ Настройка цветов и порядка площадок
-platform_order = ['Внутренние карьерные сайты', 'HH', 'Getmatch', 'Habr Career']
-platform_colors = {
-    'Getmatch': 'yellow',
-    'HH': 'red',
-    'Habr Career': 'green',
-    'Внутренние карьерные сайты': 'skyblue'
-}
+    show_all = False
+    if show_checkbox and total_rows > max_rows:
+        show_all = st.checkbox("Показать статистику по всем каналам", key=f"{key}_show_all")
+    
+    if show_all or total_rows <= max_rows:
+        df_display = df_sorted
+    else:
+        df_display = df_sorted.tail(max_rows)
+    
+    height = len(df_display) * 20 + 200
 
-# 🔍 Фильтр площадок
-if 'selected_platforms' not in st.session_state:
-    st.session_state.selected_platforms = platform_order
-
-selected_platforms = st.multiselect(
-    "Карьерные площадки",
-    options=platform_order,
-    default=st.session_state.selected_platforms,
-    key="selected_platforms"
-)
-
-# 📌 Фильтрация DataFrame
-filtered_df = df[df['Компания'].isin(companies)]
-
-# 🔷 **Функция генерации компактной цветной легенды**
-def render_platform_legend():
-    legend_html = ""
-    for p in selected_platforms:
-        color = platform_colors[p]
-        legend_html += f"<span style='font-size:12px; color:{color}; font-weight:bold'>⬤ {p}</span> &nbsp;&nbsp;"
-    st.markdown(legend_html, unsafe_allow_html=True)
-
-# 📈 **Bar chart**
-st.subheader("Количество вакансий на площадках всего")
-render_platform_legend()
-
-if not filtered_df.empty:
-    bar_df = filtered_df[['Компания'] + selected_platforms]
-    vacancies_sum = bar_df.drop(columns=['Компания']).sum().reindex(selected_platforms).reset_index()
-    vacancies_sum.columns = ['Площадка', 'Количество']
-
-    color_scale = alt.Scale(domain=selected_platforms,
-                            range=[platform_colors[p] for p in selected_platforms])
-
-    bar_chart = alt.Chart(vacancies_sum).mark_bar().encode(
-        x=alt.X('Площадка', sort=selected_platforms),
-        y='Количество',
-        color=alt.Color('Площадка', scale=color_scale, legend=None)
-    ).properties(width=700)
-
-    st.altair_chart(bar_chart)
-else:
-    st.write("Нет данных для отображения. Выберите хотя бы одну компанию.")
-
-# 📈 **Line chart**
-st.subheader("Количество вакансий на каждой из площадок")
-render_platform_legend()
-
-if not filtered_df.empty:
-    line_df = filtered_df[['Компания'] + selected_platforms]
-    line_df['Всего вакансий'] = line_df[selected_platforms].sum(axis=1)
-    line_df = line_df.sort_values('Всего вакансий', ascending=False)
-    line_df.drop(columns=['Всего вакансий'], inplace=True)
-
-    line_df_melt = line_df.melt(id_vars='Компания', var_name='Площадка', value_name='Количество')
-    line_df_melt = line_df_melt[line_df_melt['Площадка'].isin(selected_platforms)]
-
-    line_chart = alt.Chart(line_df_melt).mark_line(point=True).encode(
-        x=alt.X('Компания', sort=line_df['Компания'].tolist()),
-        y='Количество',
-        color=alt.Color('Площадка', scale=color_scale, legend=None)
-    ).properties(width=700)
-
-    st.altair_chart(line_chart)
-else:
-    st.write("Нет данных для отображения линейного графика.")
-
-# 🖥️ **Отображаем таблицу**
-st.subheader("Данные по выбранным компаниям")
-st.dataframe(filtered_df, use_container_width=True)
-
-# 📌 ================================
-# 🔷 ДОБАВЛЕНИЕ ВТОРОГО ЛИСТА - РЕЙТИНГИ
-# 📌 ================================
-
-ratings_url = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSigXcrNvRJII0f0bRwOhUGr4r5chw6NqxGjuiw2H18PlcdoAuewonaMGgE_oy4a5MHbzVifX67wulr/pub?gid=1694021447&single=true&output=tsv'
-ratings_df = pd.read_csv(ratings_url, encoding='utf-8', sep='\t')
-ratings_df.rename(columns=lambda x: x.strip(), inplace=True)
-
-# 🔄 Замена названий компаний как в первом DataFrame
-ratings_df['Компания'] = ratings_df['Компания'].replace({
-    'Альфа': 'Альфа-Банк',
-    'Озон': 'Ozon'
-})
-
-# 🔷 Фильтрация рейтингов по выбранным компаниям
-ratings_df = ratings_df[ratings_df['Компания'].isin(companies)]
-
-# 🔷 Список колонок для рейтингов
-platform_rating_cols = ['DreamJob', 'Habr Career', 'Glassdoor']
-
-# 🔠 Сортировка компаний по убыванию DreamJob
-ratings_df = ratings_df.sort_values('DreamJob', ascending=False)
-
-# 🔷 Заголовок
-st.subheader("Рейтинги компаний по площадкам")
-
-# 🔷 Легенда
-rating_platform_colors = {
-    'DreamJob': 'red',
-    'Habr Career': 'green',
-    'Glassdoor': 'gray',
-}
-
-legend_html = ""
-for p in rating_platform_colors.keys():
-    color = rating_platform_colors[p]
-    legend_html += f"<span style='font-size:12px; color:{color}; font-weight:bold'>⬤ {p}</span> &nbsp;&nbsp;"
-st.markdown(legend_html, unsafe_allow_html=True)
-
-# 🔄 Melt для Altair
-ratings_melt = ratings_df.melt(
-    id_vars=['Компания'],
-    value_vars=platform_rating_cols,
-    var_name='Площадка',
-    value_name='Рейтинг'
-)
-
-# ✅ Убираем 'отсутствует'
-ratings_melt['Рейтинг'] = ratings_melt['Рейтинг'].replace('отсутствует', np.nan)
-
-# 🎨 Color scale
-color_scale_ratings = alt.Scale(
-    domain=list(rating_platform_colors.keys()),
-    range=[rating_platform_colors[p] for p in rating_platform_colors.keys()]
-)
-
-# 🔷 Chart
-line_chart_ratings = alt.Chart(ratings_melt).mark_line(point=True).encode(
-    x=alt.X('Компания', sort=ratings_df['Компания'].tolist(), title='Компания'),
-    y=alt.Y('Рейтинг', title='Рейтинг', scale=alt.Scale(reverse=True)),
-    color=alt.Color('Площадка', scale=color_scale_ratings, legend=None)
-).transform_filter(
-    alt.datum.Рейтинг != None
-).properties(width=800)
-
-st.altair_chart(line_chart_ratings)
-
-# 📌 ================================
-# 🔷 ЦИТАТЫ СОТРУДНИКОВ
-# 📌 ================================
-st.subheader("Цитаты сотрудников по компаниям")
-selected_company_rating = st.selectbox("Выбери компанию для просмотра цитаты", ratings_df['Компания'].tolist())
-
-quote_row = ratings_df[ratings_df['Компания'] == selected_company_rating]
-if not quote_row.empty:
-    quote_text = quote_row['Цитаты сотрудников (PO)'].values[0]
-
-    st.markdown(
-        f"""
-        <div style='background-color:black; color:white; padding:20px; border-radius:10px; position:relative;'>
-            <span style='position:absolute; top:10px; right:20px; cursor:pointer; font-size:20px;' onclick="this.parentElement.style.display='none';">&times;</span>
-            <p>{quote_text}</p>
-        </div>
-        """,
-        unsafe_allow_html=True
+    fig = px.bar(
+        df_display,
+        x=value_col,
+        y=y_col,
+        orientation='h',
+        title=title,
+        height=height
     )
+    st.plotly_chart(fig, use_container_width=True)
+
+# Подписчики
+st.subheader("Количество подписчиков")
+col1, col2 = st.columns(2)
+with col1:
+    df_company = df[df['Тип'] == 'Компания']
+    plot_bar(df_company, "Каналы компаний", 'Подписчики', key='comp_subs')
+with col2:
+    df_personal = df[df['Тип'] == 'Персональный']
+    plot_bar(df_personal, "Личные блоги", 'Подписчики', key='pers_subs')
+
+# Посты за 30 дней
+st.subheader("Авторских постов / за 30 дней")
+col3, col4 = st.columns(2)
+with col3:
+    plot_bar(df_company, "Каналы компаний", 'Постов за 30 дней', key='comp_posts')
+with col4:
+    plot_bar(df_personal, "Личные блоги", 'Постов за 30 дней', key='pers_posts')
+
+# Комментарии за 30 дней
+st.subheader("Число комментариев / за 30 дней")
+col5, col6 = st.columns(2)
+with col5:
+    plot_bar(df_company, "Каналы компаний", 'Комментариев за 30 дней', key='comp_comms')
+with col6:
+    plot_bar(df_personal, "Личные блоги", 'Комментариев за 30 дней', key='pers_comms')
+
+# Комментарии на 1 пост
+st.subheader("В среднем комментариев / на 1 пост")
+col7, col8 = st.columns(2)
+with col7:
+    plot_bar(df_company, "Каналы компаний", 'Комментов на 1 пост', key='comp_comms_post')
+with col8:
+    plot_bar(df_personal, "Личные блоги", 'Комментов на 1 пост', key='pers_comms_post')
+
+# ======================
+# Новые визуализации (Агрегаторы)
+# ======================
+st.header("Агрегаторы")
+
+col9, col10 = st.columns(2)
+with col9:
+    df_agg = df[df['Тип'] == 'Агрегатор']
+    plot_bar(df_agg, "Число подписчиков", 'Подписчики', key='agg_subs', show_checkbox=False)
+with col10:
+    plot_bar(df_agg, "Количество постов / за последний 30 дней", 'Постов за 30 дней', key='agg_posts', show_checkbox=False)
+
+# ======================
+# Сводная таблица
+# ======================
+st.header("Сводная таблица по каналам")
+st.dataframe(df, use_container_width=True)
+
+# ======================
+# Блок информации о канале
+# ======================
+st.header("Подробная информация о каналах")
+
+# Используем полный DataFrame без фильтров для информации о канале
+full_df = pd.read_csv(url, sep="\t")
+full_df.columns = full_df.columns.str.strip()
+
+search_options_full = pd.concat([full_df['Название канала'], full_df['Username'], full_df['Автор']]).dropna().unique()
+
+channel_selection = st.selectbox(
+    "Выберите канал:",
+    options=search_options_full
+)
+
+channel_info = full_df[
+    (full_df['Название канала'] == channel_selection) |
+    (full_df['Username'] == channel_selection) |
+    (full_df['Автор'] == channel_selection)
+]
+
+if not channel_info.empty:
+    # Перенос строк в описании
+    if 'Описание' in channel_info.columns:
+        desc = channel_info.iloc[0]['Описание']
+        wrapped_desc = "\n".join(textwrap.wrap(str(desc), width=80))
+        channel_info.loc[channel_info.index[0], 'Описание'] = wrapped_desc
+    st.write(channel_info.T)
